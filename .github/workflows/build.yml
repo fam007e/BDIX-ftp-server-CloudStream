@@ -15,8 +15,18 @@ on:
       # choose your default branch
       - master
       - main
-    paths-ignore:
-      - '*.md'
+    # Build only when something that affects the plugins changes;
+    # README, repo.json and other docs pushes skip the build
+    paths:
+      - '*/src/**'
+      - '*/build.gradle.kts'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradle.properties'
+      - 'gradle/**'
+      - 'gradlew'
+      - 'gradlew.bat'
+      - '.github/workflows/build.yml'
 
 jobs:
   build:
