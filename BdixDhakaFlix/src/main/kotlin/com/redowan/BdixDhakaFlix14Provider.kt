@@ -87,19 +87,41 @@ open class BdixDhakaFlix14Provider : MainAPI() {
             .trim()
     }
 
+    // Folder names carry the release year (e.g. "MacGyver (TV Series 1985–1992) 720p");
+    // use it to pick the right TMDB entry when the same title has multiple eras.
+    private fun yearFromName(title: String): Int? {
+        return Regex("""\b(?:19|20)\d{2}\b""").find(title)?.value?.toIntOrNull()
+    }
+
+    private fun TmdbItem.yearInt(): Int? =
+        (firstAirDate ?: releaseDate)?.take(4)?.toIntOrNull()
+
     private suspend fun getExternalMetadata(rawName: String, isTv: Boolean, fullDetails: Boolean = false): TmdbItem? {
         val clean = cleanTitle(rawName)
+        val folderYear = yearFromName(rawName)
         val type = if (isTv) "tv" else "movie"
         return try {
-            val search = app.get(
+            val params = mutableMapOf(
+                "api_key" to "e6333b32409e02a4a6eba6fb7ff866bb",
+                "query" to clean
+            )
+            if (folderYear != null) {
+                // TMDB's search narrows by year: first_air_date_year for tv, year for movie
+                params[if (isTv) "first_air_date_year" else "year"] = folderYear.toString()
+            }
+            val results = app.get(
                 "https://api.themoviedb.org/3/search/$type",
-                params = mapOf(
-                    "api_key" to "e6333b32409e02a4a6eba6fb7ff866bb",
-                    "query" to clean
-                ),
+                params = params,
                 timeout = 10,
                 cacheTime = 60
-            ).parsed<TmdbSearchResponse>().results?.firstOrNull()
+            ).parsed<TmdbSearchResponse>().results ?: emptyList()
+
+            // Prefer a result whose own year is within ±1 of the folder's year;
+            // fall back to TMDB's default ranking otherwise.
+            val search = if (folderYear != null) {
+                results.firstOrNull { (it.yearInt() ?: Int.MIN_VALUE) in (folderYear - 1)..(folderYear + 1) }
+                    ?: results.firstOrNull()
+            } else results.firstOrNull()
 
             if (fullDetails && search?.id != null) {
                 app.get(
@@ -174,7 +196,9 @@ open class BdixDhakaFlix14Provider : MainAPI() {
         val doc = app.post("$mainUrl/$serverName/", requestBody = body).text
         val searchJson = AppUtils.parseJson<SearchResult>(doc)
         
-        searchJson.search.take(40).map { post ->
+        // h5ai returns files and folders mixed together; filter to folders
+        // BEFORE limiting, otherwise file matches crowd out folder results
+        searchJson.search.filter { it.size == null }.take(40).map { post ->
             async {
                 if (post.size == null) {
                     val href = post.href
